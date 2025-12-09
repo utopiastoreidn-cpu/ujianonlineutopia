@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulasi Ujian - Admin & Siswa</title>
+    <!-- Memuat Tailwind CSS dari CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .container-app {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 1rem;
+        }
+        .card {
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .option-button {
+            transition: all 0.2s;
+        }
+        .option-button:hover {
+            background-color: #f3f4f6;
+        }
+        .scroll-area {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app" class="container-app">
+        <!-- Application main content area -->
+    </div>
+
+    <script>
+        // Target jumlah soal per ujian
+        const TARGET_QUESTION_COUNT = 50;
+        
+        // --- DATA UTILITY FUNCTIONS ---
+
+        const getCourses = () => JSON.parse(localStorage.getItem('admin_courses') || '[]');
+        const saveCourses = (courses) => localStorage.setItem('admin_courses', JSON.stringify(courses));
+
+        const getTokens = () => JSON.parse(localStorage.getItem('admin_tokens') || '[]');
+        const saveTokens = (tokens) => localStorage.setItem('admin_tokens', JSON.stringify(tokens));
+
+        const getResults = () => JSON.parse(localStorage.getItem('exam_results') || '[]');
+        const saveResults = (results) => localStorage.setItem('exam_results', JSON.stringify(results));
+        
+        // Helper to get questions for a specific course
+        const getQuestionsByCourse = (courseId) => {
+            const courses = getCourses();
+            const course = courses.find(c => c.id === courseId);
+            return course ? course.questions : [];
+        };
+
+        // Helper to save questions for a specific course
+        const saveQuestionsByCourse = (courseId, newQuestions) => {
+            const courses = getCourses();
+            const updatedCourses = courses.map(c => 
+                c.id === courseId ? { ...c, questions: newQuestions } : c
+            );
+            saveCourses(updatedCourses);
+        };
+
+
+        // --- INITIALIZATION ---
+
+        const initializeData = () => {
+            if (!localStorage.getItem('admin_courses')) {
+                const initialCourses = [
+                    { 
+                        id: 'sejarah', 
+                        name: 'Sejarah Indonesia', 
+                        questions: [
+                            { id: 'q1', text: 'Kapan Indonesia merdeka?', options: ['1942', '1945', '1948', '1950'], answer: '1945' },
+                            { id: 'q2', text: 'Siapakah presiden pertama RI?', options: ['Hatta', 'Soekarno', 'Sjahrir', 'Sudirman'], answer: 'Soekarno' },
+                        ] 
+                    },
+                    { 
+                        id: 'mtk', 
+                        name: 'Matematika Dasar', 
+                        questions: [
+                            { id: 'q3', text: 'Berapa hasil dari 2 + 2?', options: ['2', '3', '4', '5'], answer: '4' },
+                            { id: 'q4', text: 'Hasil dari 5 x 7?', options: ['30', '35', '40', '45'], answer: '35' },
+                        ] 
+                    },
+                ];
+                localStorage.setItem('admin_courses', JSON.stringify(initialCourses));
+            }
+            if (!localStorage.getItem('admin_tokens')) {
+                const initialTokens = [
+                    { token: 'A1B2C3', name: 'Budi Santoso', courseId: 'sejarah', used: false },
+                    { token: 'D4E5F6', name: 'Siti Aminah', courseId: 'mtk', used: false },
+                ];
+                localStorage.setItem('admin_tokens', JSON.stringify(initialTokens));
+            }
+            if (!localStorage.getItem('exam_results')) {
+                localStorage.setItem('exam_results', JSON.stringify([]));
+            }
+        };
+        initializeData();
+
+        // --- GLOBAL STATE ---
+        let isAdminLoggedIn = false;
+        let currentStudent = null; // {token: '...', name: '...', courseId: '...'}
+        let currentExam = []; // Array of question objects
+        let studentAnswers = {};
+        let currentView = 'home'; 
+        let selectedCourseId = null; // Used for Admin Question Management
+
+        // --- MAIN RENDER FUNCTION ---
+
+        const render = () => {
+            const appDiv = document.getElementById('app');
+            appDiv.innerHTML = ''; 
+
+            switch (currentView) {
+                case 'home':
+                    appDiv.appendChild(createHomeView());
+                    break;
+                case 'adminLogin':
+                    appDiv.appendChild(createAdminLoginView());
+                    break;
+                case 'adminDashboard':
+                    appDiv.appendChild(createAdminDashboardView());
+                    break;
+                case 'studentLogin':
+                    appDiv.appendChild(createStudentLoginView());
+                    break;
+                case 'studentExam':
+                    appDiv.appendChild(createStudentExamView());
+                    break;
+                case 'studentResult':
+                    appDiv.appendChild(createStudentResultView());
+                    break;
+                default:
+                    appDiv.appendChild(createHomeView());
+            }
+        };
+
+        // --- VIEWS ---
+
+        // Home View (unchanged)
+        const createHomeView = () => {
+            const container = document.createElement('div');
+            container.className = 'card p-8 w-full max-w-md text-center';
+            container.innerHTML = `
+                <h1 class="text-3xl font-bold text-gray-800 mb-4">Sistem Simulasi Ujian</h1>
+                <p class="text-gray-600 mb-8">Pilih peran Anda untuk melanjutkan.</p>
+                <div class="space-y-4">
+                    <button id="btn-admin-login" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition duration-150">
+                        Admin Login
+                    </button>
+                    <button id="btn-student-login" class="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-4 rounded-lg transition duration-150">
+                        Mulai Ujian (Siswa)
+                    </button>
+                </div>
+            `;
+            container.querySelector('#btn-admin-login').addEventListener('click', () => { currentView = 'adminLogin'; render(); });
+            container.querySelector('#btn-student-login').addEventListener('click', () => { currentView = 'studentLogin'; render(); });
+            return container;
+        };
+
+        // Admin Login View (unchanged)
+        const createAdminLoginView = () => {
+            const container = document.createElement('div');
+            container.className = 'card p-8 w-full max-w-sm';
+            container.innerHTML = `
+                <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">Admin Login</h2>
+                <form id="admin-login-form" class="space-y-4">
+                    <div>
+                        <label for="username" class="block text-sm font-medium text-gray-700">Username</label>
+                        <input type="text" id="username" value="admin" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" required>
+                    </div>
+                    <div>
+                        <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
+                        <input type="password" id="password" value="admin123" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" required>
+                    </div>
+                    <p id="login-message" class="text-red-500 text-sm hidden"></p>
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg transition duration-150">
+                        Login
+                    </button>
+                    <button type="button" id="btn-back-home" class="w-full mt-2 text-sm text-gray-500 hover:text-gray-700">
+                        Kembali
+                    </button>
+                </form>
+            `;
+
+            container.querySelector('#btn-back-home').addEventListener('click', () => { currentView = 'home'; render(); });
+            container.querySelector('#admin-login-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const username = e.target.username.value;
+                const password = e.target.password.value;
+                const msg = container.querySelector('#login-message');
+
+                if (username === 'admin' && password === 'faisal25') {
+                    isAdminLoggedIn = true;
+                    currentView = 'adminDashboard';
+                    render();
+                } else {
+                    msg.textContent = 'Username atau password salah.';
+                    msg.classList.remove('hidden');
+                }
+            });
+            return container;
+        };
+        
+        // Student Login View
+        const createStudentLoginView = () => {
+            const container = document.createElement('div');
+            container.className = 'card p-8 w-full max-w-sm';
+            container.innerHTML = `
+                <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">Masuk Ujian Siswa</h2>
+                <form id="student-login-form" class="space-y-4">
+                    <div>
+                        <label for="token" class="block text-sm font-medium text-gray-700">Token Ujian</label>
+                        <input type="text" id="token" placeholder="Masukkan Token Unik" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500 uppercase" required maxlength="6">
+                    </div>
+                    <p id="login-message" class="text-red-500 text-sm hidden"></p>
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-2 rounded-lg transition duration-150">
+                        Mulai Ujian
+                    </button>
+                    <button type="button" id="btn-back-home" class="w-full mt-2 text-sm text-gray-500 hover:text-gray-700">
+                        Kembali
+                    </button>
+                </form>
+            `;
+
+            container.querySelector('#btn-back-home').addEventListener('click', () => { currentView = 'home'; render(); });
+            container.querySelector('#student-login-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const tokenInput = e.target.token.value.toUpperCase();
+                const msg = container.querySelector('#login-message');
+                const tokens = getTokens();
+                const tokenData = tokens.find(t => t.token === tokenInput);
+
+                if (!tokenData) {
+                    msg.textContent = 'Token tidak valid.';
+                    msg.classList.remove('hidden');
+                } else if (tokenData.used) {
+                    msg.textContent = 'Token ini sudah digunakan.';
+                    msg.classList.remove('hidden');
+                } else {
+                    const allQuestions = getQuestionsByCourse(tokenData.courseId);
+                    
+                    if (allQuestions.length === 0) {
+                        msg.textContent = `Tidak ada soal yang tersedia untuk mata kuliah ini. Hubungi admin.`;
+                        msg.classList.remove('hidden');
+                        return;
+                    }
+
+                    // Logika Seleksi Soal (Maks 50 Soal)
+                    let examQuestions = allQuestions;
+                    if (allQuestions.length > TARGET_QUESTION_COUNT) {
+                        // Pilih 50 soal acak
+                        examQuestions = allQuestions.sort(() => 0.5 - Math.random()).slice(0, TARGET_QUESTION_COUNT);
+                    }
+                    
+                    // Get course name for display
+                    const course = getCourses().find(c => c.id === tokenData.courseId);
+
+                    // Initialize Exam
+                    currentStudent = { ...tokenData, courseName: course.name };
+                    currentExam = examQuestions;
+                    studentAnswers = {};
+                    currentView = 'studentExam';
+                    render();
+                }
+            });
+            return container;
+        };
+
+        // Student Exam View (mostly unchanged, uses currentExam)
+        const createStudentExamView = () => {
+            const container = document.createElement('div');
+            container.className = 'card p-8 w-full max-w-4xl';
+            
+            const totalQuestions = currentExam.length;
+            
+            let htmlContent = `
+                <h2 class="text-3xl font-extrabold text-blue-600 mb-2">${currentStudent.courseName} (${totalQuestions} Soal)</h2>
+                <p class="text-lg text-gray-700 mb-6">Selamat Datang, <span class="font-semibold">${currentStudent.name}</span>!</p>
+                
+                <form id="exam-form" class="space-y-8 scroll-area">
+            `;
+
+            currentExam.forEach((q, index) => {
+                const questionNumber = index + 1;
+                htmlContent += `
+                    <div class="p-5 border-b border-gray-200">
+                        <p class="text-xl font-medium text-gray-900 mb-4">
+                            <span class="bg-blue-100 text-blue-800 text-sm font-semibold mr-2 px-2.5 py-0.5 rounded">Soal ${questionNumber}</span>
+                            ${q.text}
+                        </p>
+                        <div class="space-y-3 ml-6">
+                `;
+                q.options.forEach((option, optionIndex) => {
+                    const optionId = `q${index}-opt${optionIndex}`;
+                    const isChecked = studentAnswers[q.id] === option;
+                    htmlContent += `
+                        <label for="${optionId}" class="flex items-center p-3 border border-gray-200 rounded-lg cursor-pointer option-button ${isChecked ? 'bg-blue-50 border-blue-500' : ''}">
+                            <input type="radio" id="${optionId}" name="question-${q.id}" value="${option}" data-qid="${q.id}" class="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500" ${isChecked ? 'checked' : ''}>
+                            <span class="ml-3 text-base text-gray-700">${option}</span>
+                        </label>
+                    `;
+                });
+                htmlContent += `
+                        </div>
+                    </div>
+                `;
+            });
+
+            htmlContent += `
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg shadow-lg transition duration-150 transform hover:scale-[1.01] sticky bottom-0 z-10">
+                        Selesaikan Ujian & Lihat Hasil
+                    </button>
+                </form>
+            `;
+
+            container.innerHTML = htmlContent;
+
+            // Add change listener to update answers
+            container.querySelectorAll('input[type="radio"]').forEach(input => {
+                input.addEventListener('change', (e) => {
+                    const qid = e.target.getAttribute('data-qid');
+                    studentAnswers[qid] = e.target.value;
+
+                    // Update style
+                    const questionDiv = e.target.closest('.p-5.border-b');
+                    questionDiv.querySelectorAll('label').forEach(label => {
+                        label.classList.remove('bg-blue-50', 'border-blue-500');
+                    });
+                    e.target.closest('label').classList.add('bg-blue-50', 'border-blue-500');
+                });
+            });
+
+            // Add submit listener
+            container.querySelector('#exam-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                processExamResults();
+            });
+
+            return container;
+        };
+
+        // Process Exam Results
+        const processExamResults = () => {
+            let correctCount = 0;
+            const totalQuestions = currentExam.length;
+
+            currentExam.forEach(q => {
+                if (studentAnswers[q.id] === q.answer) {
+                    correctCount++;
+                }
+            });
+
+            const percentage = (correctCount / totalQuestions) * 100;
+
+            const newResult = {
+                token: currentStudent.token,
+                name: currentStudent.name,
+                courseId: currentStudent.courseId,
+                courseName: currentStudent.courseName,
+                correct: correctCount,
+                wrong: totalQuestions - correctCount,
+                total: totalQuestions,
+                percentage: parseFloat(percentage.toFixed(2)),
+                date: new Date().toISOString()
+            };
+
+            // 1. Save Result
+            const results = getResults();
+            saveResults([...results, newResult]);
+
+            // 2. Mark Token as Used
+            const tokens = getTokens();
+            const updatedTokens = tokens.map(t =>
+                t.token === currentStudent.token ? { ...t, used: true } : t
+            );
+            saveTokens(updatedTokens);
+
+            // 3. Store Result for display and navigate
+            currentStudent.result = newResult;
+            currentView = 'studentResult';
+            render();
+        };
+
+        // Student Result View (minor update for courseName)
+        const createStudentResultView = () => {
+            const result = currentStudent.result;
+            const container = document.createElement('div');
+            container.className = 'card p-8 w-full max-w-md text-center';
+
+            const scoreColor = result.percentage >= 70 ? 'text-green-600' : result.percentage >= 50 ? 'text-yellow-600' : 'text-red-600';
+
+            container.innerHTML = `
+                <h2 class="text-3xl font-bold text-gray-800 mb-2">Hasil Ujian Anda</h2>
+                <p class="text-lg text-gray-600 mb-8">Mata Kuliah: <span class="font-semibold">${result.courseName}</span></p>
+
+                <div class="mb-8 p-6 bg-gray-50 rounded-lg border-2 border-gray-200">
+                    <p class="text-6xl font-extrabold ${scoreColor}">${result.percentage}%</p>
+                    <p class="text-xl font-medium text-gray-700 mt-2">Persentase Nilai Akhir</p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 text-left mb-8">
+                    <div class="bg-green-100 p-4 rounded-lg">
+                        <p class="text-3xl font-bold text-green-700">${result.correct}</p>
+                        <p class="text-sm text-green-600">Jawaban Benar</p>
+                    </div>
+                    <div class="bg-red-100 p-4 rounded-lg">
+                        <p class="text-3xl font-bold text-red-700">${result.wrong}</p>
+                        <p class="text-sm text-red-600">Jawaban Salah</p>
+                    </div>
+                </div>
+
+                <p class="text-sm text-gray-500">Total Soal: ${result.total}</p>
+
+                <button id="btn-finish" class="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg transition duration-150">
+                    Selesai & Kembali ke Menu Utama
+                </button>
+            `;
+
+            container.querySelector('#btn-finish').addEventListener('click', () => {
+                currentStudent = null;
+                currentExam = [];
+                studentAnswers = {};
+                currentView = 'home';
+                render();
+            });
+            return container;
+        };
+        
+        // --- ADMIN DASHBOARD ---
+
+        const createAdminDashboardView = () => {
+            const container = document.createElement('div');
+            container.className = 'card p-8 w-full max-w-6xl';
+            container.innerHTML = `
+                <h2 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-3">Dashboard Admin</h2>
+                
+                <div class="flex flex-wrap gap-4 mb-8">
+                    <button id="tab-courses" class="px-4 py-2 rounded-lg font-semibold bg-blue-600 text-white hover:bg-blue-700 transition">Manajemen Mata Kuliah</button>
+                    <button id="tab-questions" class="px-4 py-2 rounded-lg font-semibold bg-gray-200 text-gray-800 hover:bg-gray-300 transition">Manajemen Soal</button>
+                    <button id="tab-tokens" class="px-4 py-2 rounded-lg font-semibold bg-gray-200 text-gray-800 hover:bg-gray-300 transition">Manajemen Token</button>
+                    <button id="tab-results" class="px-4 py-2 rounded-lg font-semibold bg-gray-200 text-gray-800 hover:bg-gray-300 transition">Hasil Ujian Siswa</button>
+                    <button id="btn-logout" class="ml-auto px-4 py-2 rounded-lg font-semibold bg-red-500 text-white hover:bg-red-600 transition">Logout</button>
+                </div>
+
+                <div id="admin-content-area">
+                    <!-- Tab content will be loaded here -->
+                </div>
+            `;
+
+            const contentArea = container.querySelector('#admin-content-area');
+            const tabs = {
+                courses: createCourseManagement,
+                questions: createQuestionManagement,
+                tokens: createTokenManagement,
+                results: createResultsView
+            };
+            let activeTab = 'courses'; // Set default tab to Courses
+
+            const loadTab = (tabName) => {
+                activeTab = tabName;
+                contentArea.innerHTML = '';
+                contentArea.appendChild(tabs[tabName]());
+
+                // Update button styles
+                container.querySelectorAll('button[id^="tab-"]').forEach(btn => {
+                    btn.classList.remove('bg-blue-600', 'text-white');
+                    btn.classList.add('bg-gray-200', 'text-gray-800');
+                });
+                container.querySelector(`#tab-${tabName}`).classList.remove('bg-gray-200', 'text-gray-800');
+                container.querySelector(`#tab-${tabName}`).classList.add('bg-blue-600', 'text-white');
+            };
+
+            container.querySelector('#tab-courses').addEventListener('click', () => loadTab('courses'));
+            container.querySelector('#tab-questions').addEventListener('click', () => loadTab('questions'));
+            container.querySelector('#tab-tokens').addEventListener('click', () => loadTab('tokens'));
+            container.querySelector('#tab-results').addEventListener('click', () => loadTab('results'));
+            container.querySelector('#btn-logout').addEventListener('click', () => {
+                isAdminLoggedIn = false;
+                currentView = 'home';
+                render();
+            });
+
+            loadTab('courses'); // Load default tab
+            return container;
+        };
+        
+        // --- ADMIN SUB-VIEWS ---
+
+        // 1. Manajemen Mata Kuliah (NEW)
+        const createCourseManagement = () => {
+            const container = document.createElement('div');
+            container.innerHTML = `
+                <h3 class="text-2xl font-semibold text-gray-700 mb-4">Pengelolaan Mata Kuliah</h3>
+
+                <div class="grid md:grid-cols-2 gap-8">
+                    <!-- Form Tambah/Edit Mata Kuliah -->
+                    <div>
+                        <div class="p-6 bg-purple-50 rounded-lg shadow-inner mb-4">
+                            <h4 id="course-form-title" class="text-xl font-medium text-purple-800 mb-4">Tambah Mata Kuliah Baru</h4>
+                            <form id="course-form" class="space-y-3">
+                                <input type="hidden" id="course-id-hidden">
+                                <div>
+                                    <label for="course-name" class="block text-sm font-medium text-gray-700">Nama Mata Kuliah</label>
+                                    <input type="text" id="course-name" placeholder="Contoh: Fisika Kuantum" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" required>
+                                </div>
+                                <button type="submit" id="course-submit-btn" class="w-full bg-purple-600 text-white py-2 rounded-lg font-semibold">Simpan Mata Kuliah</button>
+                                <button type="button" id="course-cancel-btn" class="w-full bg-gray-400 text-white py-2 rounded-lg font-semibold hidden">Batalkan Edit</button>
+                                <p id="c-message" class="text-sm text-red-500 hidden"></p>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Daftar Mata Kuliah -->
+                    <div>
+                        <h4 class="text-xl font-medium text-gray-800 mb-4">Daftar Mata Kuliah Tersedia</h4>
+                        <div id="courses-list" class="space-y-3 scroll-area pr-2">
+                            <!-- Courses will be listed here -->
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            const form = container.querySelector('#course-form');
+            const list = container.querySelector('#courses-list');
+            const msg = container.querySelector('#c-message');
+            const titleEl = container.querySelector('#course-form-title');
+            const idHidden = container.querySelector('#course-id-hidden');
+            const submitBtn = container.querySelector('#course-submit-btn');
+            const cancelBtn = container.querySelector('#course-cancel-btn');
+
+            const renderCourseList = () => {
+                const courses = getCourses();
+                list.innerHTML = '';
+
+                if (courses.length === 0) {
+                    list.innerHTML = '<p class="text-gray-500 italic">Belum ada mata kuliah yang ditambahkan.</p>';
+                    return;
+                }
+
+                courses.forEach(c => {
+                    const qCount = c.questions.length;
+                    const cDiv = document.createElement('div');
+                    cDiv.className = 'p-3 bg-white border border-gray-200 rounded-lg shadow-sm flex justify-between items-center';
+                    cDiv.innerHTML = `
+                        <div>
+                            <p class="text-lg font-semibold text-gray-800">${c.name}</p>
+                            <p class="text-xs text-purple-600 font-medium">${qCount} Soal tersimpan</p>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <button data-id="${c.id}" class="edit-c-btn text-blue-500 hover:text-blue-700 text-sm">Edit</button>
+                            <button data-id="${c.id}" data-name="${c.name}" data-count="${qCount}" class="delete-c-btn text-red-500 hover:text-red-700 text-sm">Hapus</button>
+                        </div>
+                    `;
+                    list.appendChild(cDiv);
+                });
+                
+                list.querySelectorAll('.edit-c-btn').forEach(btn => btn.addEventListener('click', (e) => {
+                    const courseId = e.target.getAttribute('data-id');
+                    const course = getCourses().find(c => c.id === courseId);
+                    if (course) {
+                        titleEl.textContent = `Edit Mata Kuliah: ${course.name}`;
+                        container.querySelector('#course-name').value = course.name;
+                        idHidden.value = course.id;
+                        submitBtn.textContent = 'Perbarui Mata Kuliah';
+                        cancelBtn.classList.remove('hidden');
+                    }
+                }));
+
+                list.querySelectorAll('.delete-c-btn').forEach(btn => btn.addEventListener('click', (e) => {
+                    const courseId = e.target.getAttribute('data-id');
+                    const courseName = e.target.getAttribute('data-name');
+                    const qCount = parseInt(e.target.getAttribute('data-count'));
+                    
+                    if (qCount > 0) {
+                        if (!confirm(`Mata kuliah ${courseName} memiliki ${qCount} soal. Menghapusnya akan menghapus semua soal tersebut. Lanjutkan?`)) {
+                            return;
+                        }
+                    } else if (getTokens().some(t => t.courseId === courseId && !t.used)) {
+                        if (!confirm(`Mata kuliah ${courseName} masih memiliki token aktif. Menghapus mata kuliah ini akan membuat token tersebut tidak valid. Lanjutkan?`)) {
+                            return;
+                        }
+                    } else {
+                         if (!confirm(`Yakin ingin menghapus mata kuliah ${courseName}?`)) {
+                            return;
+                        }
+                    }
+
+                    deleteCourse(courseId);
+                    renderCourseList();
+                    // Reload related tabs if needed (e.g., token management)
+                    if (document.getElementById('tab-tokens').classList.contains('bg-blue-600')) {
+                        document.getElementById('admin-content-area').innerHTML = '';
+                        document.getElementById('admin-content-area').appendChild(createTokenManagement());
+                    }
+                }));
+            };
+            
+            cancelBtn.addEventListener('click', () => {
+                form.reset();
+                idHidden.value = '';
+                titleEl.textContent = 'Tambah Mata Kuliah Baru';
+                submitBtn.textContent = 'Simpan Mata Kuliah';
+                cancelBtn.classList.add('hidden');
+                msg.classList.add('hidden');
+            });
+
+
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const name = e.target['course-name'].value.trim();
+                const id = idHidden.value;
+                let courses = getCourses();
+
+                if (id) {
+                    // Edit mode
+                    courses = courses.map(c => 
+                        c.id === id ? { ...c, name: name } : c
+                    );
+                    msg.textContent = `Mata Kuliah ${name} berhasil diperbarui!`;
+                } else {
+                    // Add mode
+                    const newId = name.toLowerCase().replace(/\s/g, '-').substring(0, 20) + '-' + Date.now().toString().substring(10);
+                    const newCourse = {
+                        id: newId,
+                        name: name,
+                        questions: []
+                    };
+                    courses = [...courses, newCourse];
+                    msg.textContent = `Mata Kuliah ${name} berhasil ditambahkan!`;
+                }
+
+                saveCourses(courses);
+                msg.classList.remove('hidden', 'text-red-500');
+                msg.classList.add('text-green-600');
+                
+                // Reset form after saving
+                form.reset();
+                idHidden.value = '';
+                titleEl.textContent = 'Tambah Mata Kuliah Baru';
+                submitBtn.textContent = 'Simpan Mata Kuliah';
+                cancelBtn.classList.add('hidden');
+
+                renderCourseList();
+                setTimeout(() => { msg.classList.add('hidden'); msg.classList.remove('text-green-600'); msg.classList.add('text-red-500'); }, 3000);
+            });
+            
+            const deleteCourse = (courseId) => {
+                const courses = getCourses();
+                const updatedCourses = courses.filter(c => c.id !== courseId);
+                saveCourses(updatedCourses);
+
+                // Clean up related tokens (optional but good practice)
+                const tokens = getTokens();
+                const updatedTokens = tokens.filter(t => t.courseId !== courseId);
+                saveTokens(updatedTokens);
+            };
+
+            renderCourseList();
+            return container;
+        };
+
+        // 2. Manajemen Soal
+        const createQuestionManagement = () => {
+            const courses = getCourses();
+            const selectedCourse = courses.find(c => c.id === selectedCourseId) || courses[0];
+            selectedCourseId = selectedCourse ? selectedCourse.id : null;
+
+            const container = document.createElement('div');
+            
+            if (courses.length === 0) {
+                 container.innerHTML = `
+                    <div class="p-8 bg-red-100 border border-red-400 rounded-lg text-red-700">
+                        <p class="font-bold">PERHATIAN:</p>
+                        <p>Anda harus membuat Mata Kuliah terlebih dahulu di tab "Manajemen Mata Kuliah" sebelum dapat menambahkan soal.</p>
+                    </div>
+                `;
+                return container;
+            }
+
+            container.innerHTML = `
+                <h3 class="text-2xl font-semibold text-gray-700 mb-4">Manajemen Soal</h3>
+                
+                <div class="mb-6 p-4 bg-gray-100 rounded-lg flex items-center space-x-3">
+                    <label for="course-selector" class="font-medium text-gray-700 whitespace-nowrap">Pilih Mata Kuliah:</label>
+                    <select id="course-selector" class="block w-full px-3 py-2 border border-gray-300 rounded-md">
+                        <!-- Options filled by JS -->
+                    </select>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-8">
+                    <!-- Form Tambah Soal -->
+                    <div>
+                        <div class="p-6 bg-blue-50 rounded-lg shadow-inner mb-4">
+                            <h4 class="text-xl font-medium text-blue-800 mb-4">Tambah Soal untuk ${selectedCourse ? selectedCourse.name : ''}</h4>
+                            <form id="add-question-form" class="space-y-3">
+                                <div>
+                                    <label for="question-text" class="block text-sm font-medium text-gray-700">Teks Soal</label>
+                                    <textarea id="question-text" rows="2" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" required></textarea>
+                                </div>
+                                <div id="options-container" class="space-y-2">
+                                    <!-- Options will be dynamically added -->
+                                </div>
+                                <button type="button" id="add-option-btn" class="text-blue-500 text-sm hover:underline">Tambah Pilihan Jawaban</button>
+                                <div>
+                                    <label for="correct-answer" class="block text-sm font-medium text-gray-700">Jawaban Benar (Ketik ulang teks jawaban)</label>
+                                    <input type="text" id="correct-answer" placeholder="Harus sama persis dengan salah satu pilihan" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" required>
+                                </div>
+                                <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold">Simpan Soal</button>
+                                <p id="q-message" class="text-sm text-red-500 hidden"></p>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Daftar Soal -->
+                    <div>
+                        <h4 class="text-xl font-medium text-gray-800 mb-4">Daftar Soal ${selectedCourse ? selectedCourse.name : ''} (<span id="total-questions">0</span>)</h4>
+                        <p class="text-sm text-gray-500 mb-4">Target soal untuk ujian: ${TARGET_QUESTION_COUNT}</p>
+                        <div id="questions-list" class="space-y-3 scroll-area pr-2">
+                            <!-- Questions will be listed here -->
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            const courseSelector = container.querySelector('#course-selector');
+            const optionsContainer = container.querySelector('#options-container');
+            const addOptionBtn = container.querySelector('#add-option-btn');
+            const form = container.querySelector('#add-question-form');
+            const qList = container.querySelector('#questions-list');
+            const totalQ = container.querySelector('#total-questions');
+            let optionIndex = 0;
+            
+            // Populate selector
+            courses.forEach(c => {
+                const option = document.createElement('option');
+                option.value = c.id;
+                option.textContent = c.name;
+                if (c.id === selectedCourseId) {
+                    option.selected = true;
+                }
+                courseSelector.appendChild(option);
+            });
+            
+            courseSelector.addEventListener('change', (e) => {
+                selectedCourseId = e.target.value;
+                createAdminDashboardView().querySelector('#tab-questions').click(); // Rerender tab
+            });
+
+
+            const renderOptions = (options = ['A', 'B']) => {
+                optionsContainer.innerHTML = '';
+                optionIndex = 0;
+                options.forEach(val => {
+                    const div = document.createElement('div');
+                    div.className = 'flex items-center space-x-2';
+                    div.innerHTML = `
+                        <input type="text" name="option" value="${val}" placeholder="Pilihan ${String.fromCharCode(65 + optionIndex)}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" required>
+                        <button type="button" class="remove-option-btn text-red-500 hover:text-red-700 text-lg">&times;</button>
+                    `;
+                    div.querySelector('.remove-option-btn').addEventListener('click', (e) => {
+                        if (optionsContainer.children.length > 2) {
+                            e.target.closest('div').remove();
+                        }
+                    });
+                    optionsContainer.appendChild(div);
+                    optionIndex++;
+                });
+            };
+
+            const renderQuestionList = () => {
+                if (!selectedCourseId) return;
+                
+                const questions = getQuestionsByCourse(selectedCourseId);
+                qList.innerHTML = '';
+                totalQ.textContent = questions.length;
+                
+                if (questions.length === 0) {
+                    qList.innerHTML = '<p class="text-gray-500 italic">Belum ada soal untuk mata kuliah ini.</p>';
+                    return;
+                }
+
+                questions.forEach(q => {
+                    const qDiv = document.createElement('div');
+                    qDiv.className = 'p-3 bg-white border border-gray-200 rounded-lg shadow-sm flex justify-between items-center';
+                    qDiv.innerHTML = `
+                        <div class="w-full">
+                            <p class="text-sm font-semibold text-gray-800">${q.text.substring(0, 70)}...</p>
+                            <p class="text-xs text-blue-600 font-medium">Jawaban: <span class="text-green-600">${q.answer}</span></p>
+                        </div>
+                        <button data-id="${q.id}" class="delete-q-btn text-red-500 hover:text-red-700 text-lg ml-4">Hapus</button>
+                    `;
+                    qDiv.querySelector('.delete-q-btn').addEventListener('click', (e) => {
+                        deleteQuestion(e.target.getAttribute('data-id'));
+                        renderQuestionList();
+                    });
+                    qList.appendChild(qDiv);
+                });
+            };
+
+            const deleteQuestion = (id) => {
+                const questions = getQuestionsByCourse(selectedCourseId);
+                const updatedQuestions = questions.filter(q => q.id !== id);
+                saveQuestionsByCourse(selectedCourseId, updatedQuestions);
+            };
+
+            addOptionBtn.addEventListener('click', () => {
+                renderOptions([...Array.from(optionsContainer.querySelectorAll('input[name="option"]')).map(input => input.value), 'Pilihan Baru']);
+            });
+
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const text = e.target['question-text'].value.trim();
+                const correctAnswer = e.target['correct-answer'].value.trim();
+                const options = Array.from(e.target.querySelectorAll('input[name="option"]')).map(input => input.value.trim()).filter(v => v !== '');
+                const msg = container.querySelector('#q-message');
+
+                if (options.length < 2) {
+                    msg.textContent = 'Minimal harus ada 2 pilihan jawaban.';
+                    msg.classList.remove('hidden');
+                    return;
+                }
+                
+                if (!options.includes(correctAnswer)) {
+                    msg.textContent = 'Jawaban Benar harus ada di salah satu pilihan jawaban.';
+                    msg.classList.remove('hidden');
+                    return;
+                }
+
+                const newQuestion = {
+                    id: 'q' + Date.now(),
+                    text: text,
+                    options: options,
+                    answer: correctAnswer
+                };
+
+                const questions = getQuestionsByCourse(selectedCourseId);
+                saveQuestionsByCourse(selectedCourseId, [...questions, newQuestion]);
+
+                msg.textContent = 'Soal berhasil ditambahkan!';
+                msg.classList.remove('hidden', 'text-red-500');
+                msg.classList.add('text-green-600');
+                form.reset();
+                renderOptions(); // Reset options to default
+                renderQuestionList(); // Update list
+
+                setTimeout(() => { msg.classList.add('hidden'); msg.classList.remove('text-green-600'); msg.classList.add('text-red-500'); }, 3000);
+            });
+
+            renderOptions(['A', 'B', 'C', 'D']); // Render default options on load
+            if (selectedCourseId) {
+                renderQuestionList(); // Render existing questions
+            }
+            return container;
+        };
+        
+        // 3. Manajemen Token (updated to use courseId/courseName)
+        const createTokenManagement = () => {
+            const container = document.createElement('div');
+            container.innerHTML = `
+                <h3 class="text-2xl font-semibold text-gray-700 mb-4">Manajemen Token Siswa</h3>
+
+                <div class="grid md:grid-cols-2 gap-8">
+                    <!-- Form Tambah Token -->
+                    <div>
+                        <div class="p-6 bg-yellow-50 rounded-lg shadow-inner mb-4">
+                            <h4 class="text-xl font-medium text-yellow-800 mb-4">Buat Token Baru</h4>
+                            <form id="add-token-form" class="space-y-3">
+                                <div>
+                                    <label for="student-name" class="block text-sm font-medium text-gray-700">Nama Siswa</label>
+                                    <input type="text" id="student-name" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" required>
+                                </div>
+                                <div>
+                                    <label for="token-course" class="block text-sm font-medium text-gray-700">Mata Kuliah</label>
+                                    <select id="token-course" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" required>
+                                        <option value="">-- Pilih Mata Kuliah --</option>
+                                        <!-- Course options will be added dynamically -->
+                                    </select>
+                                </div>
+                                <button type="submit" class="w-full bg-yellow-600 text-white py-2 rounded-lg font-semibold">Buat & Simpan Token</button>
+                                <p id="t-message" class="text-sm text-red-500 hidden"></p>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Daftar Token -->
+                    <div>
+                        <h4 class="text-xl font-medium text-gray-800 mb-4">Daftar Token (<span id="total-tokens">0</span>)</h4>
+                        <div id="tokens-list" class="space-y-3 scroll-area pr-2">
+                            <!-- Tokens will be listed here -->
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            const form = container.querySelector('#add-token-form');
+            const courseSelect = container.querySelector('#token-course');
+            const tList = container.querySelector('#tokens-list');
+            const totalT = container.querySelector('#total-tokens');
+
+            const populateCourseSelect = () => {
+                const courses = getCourses();
+                courseSelect.innerHTML = '<option value="">-- Pilih Mata Kuliah --</option>';
+                courses.forEach(c => {
+                    const option = document.createElement('option');
+                    option.value = c.id;
+                    option.textContent = `${c.name} (${c.questions.length} Soal)`;
+                    courseSelect.appendChild(option);
+                });
+            };
+
+            const generateToken = () => {
+                return Math.random().toString(36).substring(2, 8).toUpperCase(); 
+            };
+
+            const renderTokenList = () => {
+                const tokens = getTokens();
+                const courses = getCourses();
+                tList.innerHTML = '';
+                totalT.textContent = tokens.length;
+                if (tokens.length === 0) {
+                    tList.innerHTML = '<p class="text-gray-500 italic">Belum ada token yang dibuat.</p>';
+                    return;
+                }
+
+                tokens.sort((a, b) => (a.used === b.used) ? 0 : a.used ? 1 : -1); 
+
+                tokens.forEach(t => {
+                    const statusClass = t.used ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700';
+                    const statusText = t.used ? 'Sudah Digunakan' : 'Siap Digunakan';
+                    const courseName = courses.find(c => c.id === t.courseId)?.name || 'Mata Kuliah Dihapus';
+                    
+                    const tDiv = document.createElement('div');
+                    tDiv.className = `p-3 bg-white border rounded-lg shadow-sm flex justify-between items-center ${t.used ? 'opacity-70' : 'opacity-100'}`;
+                    tDiv.innerHTML = `
+                        <div>
+                            <p class="text-lg font-bold text-gray-800">${t.token}</p>
+                            <p class="text-sm text-gray-700">${t.name} - <span class="font-medium">${courseName}</span></p>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <span class="text-xs font-semibold px-2 py-1 rounded-full ${statusClass}">${statusText}</span>
+                            <button data-token="${t.token}" class="delete-t-btn text-red-500 hover:text-red-700 text-lg">Hapus</button>
+                        </div>
+                    `;
+                    tDiv.querySelector('.delete-t-btn').addEventListener('click', (e) => {
+                        deleteToken(e.target.getAttribute('data-token'));
+                        renderTokenList();
+                    });
+                    tList.appendChild(tDiv);
+                });
+            };
+
+            const deleteToken = (token) => {
+                const tokens = getTokens();
+                const updatedTokens = tokens.filter(t => t.token !== token);
+                saveTokens(updatedTokens);
+            };
+
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const name = e.target['student-name'].value.trim();
+                const courseId = e.target['token-course'].value;
+                const msg = container.querySelector('#t-message');
+
+                if (!courseId) {
+                    msg.textContent = 'Pilih Mata Kuliah terlebih dahulu.';
+                    msg.classList.remove('hidden');
+                    return;
+                }
+                
+                // Cek apakah mata kuliah punya soal
+                if (getQuestionsByCourse(courseId).length === 0) {
+                    msg.textContent = 'Mata kuliah yang dipilih belum memiliki soal.';
+                    msg.classList.remove('hidden');
+                    return;
+                }
+
+                const newToken = {
+                    token: generateToken(),
+                    name: name,
+                    courseId: courseId,
+                    used: false
+                };
+
+                const tokens = getTokens();
+                saveTokens([...tokens, newToken]);
+
+                msg.textContent = `Token ${newToken.token} berhasil dibuat untuk ${name}!`;
+                msg.classList.remove('hidden', 'text-red-500');
+                msg.classList.add('text-green-600');
+                form.reset();
+                renderTokenList(); 
+
+                setTimeout(() => { msg.classList.add('hidden'); msg.classList.remove('text-green-600'); msg.classList.add('text-red-500'); }, 3000);
+            });
+
+            populateCourseSelect();
+            renderTokenList();
+            return container;
+        };
+
+        // 4. Tampilan Hasil Ujian Siswa (Admin) (minor update for courseName)
+        const createResultsView = () => {
+            const container = document.createElement('div');
+            container.innerHTML = `
+                <h3 class="text-2xl font-semibold text-gray-700 mb-4">Hasil Ujian Siswa</h3>
+                <div id="results-list" class="space-y-3 scroll-area">
+                    <!-- Results will be listed here -->
+                </div>
+            `;
+
+            const rList = container.querySelector('#results-list');
+            const results = getResults();
+
+            if (results.length === 0) {
+                rList.innerHTML = '<p class="text-gray-500 italic">Belum ada hasil ujian yang tersimpan.</p>';
+                return container;
+            }
+
+            // Sort by date (latest first)
+            results.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            const table = document.createElement('table');
+            table.className = 'min-w-full divide-y divide-gray-200 shadow-md rounded-lg overflow-hidden';
+            table.innerHTML = `
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama Siswa</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mata Kuliah</th>
+                        <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Total Soal</th>
+                        <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Benar</th>
+                        <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Persentase (%)</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tanggal</th>
+                    </tr>
+                </thead>
+                <tbody id="results-table-body" class="bg-white divide-y divide-gray-200">
+                    <!-- Rows will be added here -->
+                </tbody>
+            `;
+
+            const tbody = table.querySelector('#results-table-body');
+
+            results.forEach(r => {
+                const percentageColor = r.percentage >= 70 ? 'text-green-600 font-bold' : r.percentage >= 50 ? 'text-yellow-600 font-bold' : 'text-red-600 font-bold';
+                const date = new Date(r.date).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' });
+
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${r.name}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${r.courseName}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-center">${r.total}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-center text-green-600 font-medium">${r.correct}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-center ${percentageColor}">${r.percentage}%</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-xs text-gray-400">${date}</td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            rList.appendChild(table);
+            return container;
+        };
+        
+        // Start the application
+        document.addEventListener('DOMContentLoaded', () => {
+            render();
+        });
+
+    </script>
+</body>
+</html>
